@@ -1,6 +1,5 @@
 import AppKit
 import BlinkCore
-@preconcurrency import ApplicationServices
 import SwiftUI
 
 @main
@@ -36,13 +35,30 @@ struct BlinkApp: App {
 @MainActor
 final class BlinkAppDelegate: NSObject, NSApplicationDelegate {
     let coordinator = BreakCoordinator()
+    private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "In a meeting", action: #selector(toggleMeetingMode), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit Blink", action: #selector(quit), keyEquivalent: "q")
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem?.button?.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "Blink")
+        statusItem?.menu = menu
         coordinator.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    @objc private func toggleMeetingMode() {
+        coordinator.setManuallyInMeeting(!coordinator.isMeetingModeActive)
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
     }
 }
 
@@ -54,7 +70,6 @@ final class BreakCoordinator {
     private var timer: Timer?
     private var overlays: [BreakOverlayWindow] = []
     private var snoozesUsed = 0
-    private let inputBlocker = InputBlocker()
     private let permissionSequence = PermissionSequence()
     @ObservationIgnored private lazy var typingActivityMonitor = TypingActivityMonitor { [weak self] in
         self?.handle(.typingActivity)
@@ -97,7 +112,6 @@ final class BreakCoordinator {
     }
 
     private func showBreak() {
-        inputBlocker.start()
         overlays = NSScreen.screens.map { screen in
             BreakOverlayWindow(
                 screen: screen,
@@ -113,7 +127,6 @@ final class BreakCoordinator {
         guard !overlays.isEmpty else { return }
         overlays.forEach { $0.dismiss() }
         overlays = []
-        inputBlocker.stop()
         snoozesUsed = 0
         handle(.breakCompleted)
     }
@@ -128,7 +141,6 @@ final class BreakCoordinator {
     private func dismissForSnooze() {
         overlays.forEach { $0.dismiss() }
         overlays = []
-        inputBlocker.stop()
     }
 
     func setManuallyInMeeting(_ active: Bool) {
@@ -287,48 +299,5 @@ struct BreakOverlayView: View {
         .task { content.start() }
         .onAppear { visible = true }
         .animation(reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.85), value: visible)
-    }
-}
-
-@MainActor
-final class InputBlocker {
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
-
-    func start() {
-        guard eventTap == nil else { return }
-        let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        guard AXIsProcessTrustedWithOptions(prompt) else { return }
-        let eventTypes: [CGEventType] = [.keyDown, .keyUp, .leftMouseDown, .leftMouseUp,
-                                         .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp]
-        let eventMask = eventTypes.reduce(CGEventMask(0)) { mask, type in
-            mask | (CGEventMask(1) << type.rawValue)
-        }
-        eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: eventMask,
-            callback: { _, type, event, _ in
-                type == .tapDisabledByTimeout || type == .tapDisabledByUserInput
-                    ? Unmanaged.passUnretained(event)
-                    : nil
-            },
-            userInfo: nil
-        )
-        guard let eventTap else { return }
-        runLoopSource = CFMachPortCreateRunLoopSource(nil, eventTap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: eventTap, enable: true)
-    }
-
-    func stop() {
-        guard let eventTap else { return }
-        CGEvent.tapEnable(tap: eventTap, enable: false)
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        self.eventTap = nil
-        runLoopSource = nil
     }
 }
