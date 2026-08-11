@@ -26,6 +26,12 @@ struct BlinkApp: App {
                 set: { appDelegate.coordinator.setSnoozeLimit($0) }
             ), in: 0...3)
             Divider()
+            Menu("Debug") {
+                Button("Trigger Now") { appDelegate.coordinator.triggerBreakNow() }
+            }
+            Divider()
+            Button("Permissions...") { appDelegate.showOnboarding() }
+            Divider()
             Button("Quit Blink") { NSApp.terminate(nil) }
         }
         .menuBarExtraStyle(.menu)
@@ -35,30 +41,33 @@ struct BlinkApp: App {
 @MainActor
 final class BlinkAppDelegate: NSObject, NSApplicationDelegate {
     let coordinator = BreakCoordinator()
-    private var statusItem: NSStatusItem?
+    private var onboardingWindowController: OnboardingWindowController?
+
+    private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let menu = NSMenu()
-        menu.addItem(withTitle: "In a meeting", action: #selector(toggleMeetingMode), keyEquivalent: "")
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Blink", action: #selector(quit), keyEquivalent: "q")
-
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "Blink")
-        statusItem?.menu = menu
         coordinator.start()
+
+        if !UserDefaults.standard.bool(forKey: Self.hasCompletedOnboardingKey) {
+            showOnboarding()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
-    @objc private func toggleMeetingMode() {
-        coordinator.setManuallyInMeeting(!coordinator.isMeetingModeActive)
-    }
-
-    @objc private func quit() {
-        NSApp.terminate(nil)
+    @objc func showOnboarding() {
+        if onboardingWindowController == nil {
+            onboardingWindowController = OnboardingWindowController { [weak self] in
+                UserDefaults.standard.set(true, forKey: Self.hasCompletedOnboardingKey)
+                self?.onboardingWindowController?.close()
+                self?.onboardingWindowController = nil
+            }
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        onboardingWindowController?.showWindow(nil)
+        onboardingWindowController?.window?.makeKeyAndOrderFront(nil)
     }
 }
 
@@ -70,7 +79,6 @@ final class BreakCoordinator {
     private var timer: Timer?
     private var overlays: [BreakOverlayWindow] = []
     private var snoozesUsed = 0
-    private let permissionSequence = PermissionSequence()
     @ObservationIgnored private lazy var typingActivityMonitor = TypingActivityMonitor { [weak self] in
         self?.handle(.typingActivity)
     }
@@ -98,8 +106,12 @@ final class BreakCoordinator {
             Task { @MainActor in self?.handle(.timeTick(.seconds(1))) }
         }
         typingActivityMonitor.start()
-        permissionSequence.requestAccessibilityThenCamera(cameraObserver)
+        cameraObserver.start()
         LaunchAtLogin.register()
+    }
+
+    func triggerBreakNow() {
+        showBreak()
     }
 
     private func handle(_ event: BreakScheduler.Event) {
