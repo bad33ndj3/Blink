@@ -12,5 +12,6 @@ let package = Package(
         .target(name: "BlinkCore"),
         .executableTarget(name: "Blink", dependencies: ["BlinkCore"]),
         .testTarget(name: "BlinkCoreTests", dependencies: ["BlinkCore"]),
+        .testTarget(name: "BlinkTests", dependencies: ["Blink"]),
     ]
 )
