@@ -5,36 +5,44 @@ import SwiftUI
 
 @main
 struct BlinkApp: App {
-    private let coordinator = BreakCoordinator()
-
-    init() {
-        NSApp.setActivationPolicy(.accessory)
-        coordinator.start()
-    }
+    @NSApplicationDelegateAdaptor(BlinkAppDelegate.self) private var appDelegate
 
     var body: some Scene {
         MenuBarExtra("Blink", systemImage: "eye") {
             Toggle("In a meeting", isOn: Binding(
-                get: { coordinator.isMeetingModeActive },
-                set: { coordinator.setManuallyInMeeting($0) }
+                get: { appDelegate.coordinator.isMeetingModeActive },
+                set: { appDelegate.coordinator.setManuallyInMeeting($0) }
             ))
             Divider()
-            Stepper("Interval: \(coordinator.intervalMinutes) min", value: Binding(
-                get: { coordinator.intervalMinutes },
-                set: { coordinator.setIntervalMinutes($0) }
+            Stepper("Interval: \(appDelegate.coordinator.intervalMinutes) min", value: Binding(
+                get: { appDelegate.coordinator.intervalMinutes },
+                set: { appDelegate.coordinator.setIntervalMinutes($0) }
             ), in: 1...180)
-            Stepper("Deep Session Cap: \(coordinator.deepSessionCapMinutes) min", value: Binding(
-                get: { coordinator.deepSessionCapMinutes },
-                set: { coordinator.setDeepSessionCapMinutes($0) }
+            Stepper("Deep Session Cap: \(appDelegate.coordinator.deepSessionCapMinutes) min", value: Binding(
+                get: { appDelegate.coordinator.deepSessionCapMinutes },
+                set: { appDelegate.coordinator.setDeepSessionCapMinutes($0) }
             ), in: 1...480)
-            Stepper("Snoozes: \(coordinator.snoozeLimit)", value: Binding(
-                get: { coordinator.snoozeLimit },
-                set: { coordinator.setSnoozeLimit($0) }
+            Stepper("Snoozes: \(appDelegate.coordinator.snoozeLimit)", value: Binding(
+                get: { appDelegate.coordinator.snoozeLimit },
+                set: { appDelegate.coordinator.setSnoozeLimit($0) }
             ), in: 0...3)
             Divider()
             Button("Quit Blink") { NSApp.terminate(nil) }
         }
         .menuBarExtraStyle(.menu)
+    }
+}
+
+@MainActor
+final class BlinkAppDelegate: NSObject, NSApplicationDelegate {
+    let coordinator = BreakCoordinator()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        coordinator.start()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 }
 
@@ -47,6 +55,7 @@ final class BreakCoordinator {
     private var overlays: [BreakOverlayWindow] = []
     private var snoozesUsed = 0
     private let inputBlocker = InputBlocker()
+    private let permissionSequence = PermissionSequence()
     @ObservationIgnored private lazy var typingActivityMonitor = TypingActivityMonitor { [weak self] in
         self?.handle(.typingActivity)
     }
@@ -74,7 +83,7 @@ final class BreakCoordinator {
             Task { @MainActor in self?.handle(.timeTick(.seconds(1))) }
         }
         typingActivityMonitor.start()
-        cameraObserver.start()
+        permissionSequence.requestAccessibilityThenCamera(cameraObserver)
         LaunchAtLogin.register()
     }
 

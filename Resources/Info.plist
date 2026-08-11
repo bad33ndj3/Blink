@@ -18,5 +18,7 @@
     <string>26.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Blink uses camera activity to avoid interrupting video calls.</string>
 </dict>
 </plist>

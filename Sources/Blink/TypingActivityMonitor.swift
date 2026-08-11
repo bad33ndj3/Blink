@@ -1,5 +1,4 @@
 import AppKit
-@preconcurrency import ApplicationServices
 
 @MainActor
 final class TypingActivityMonitor {
@@ -13,8 +12,6 @@ final class TypingActivityMonitor {
 
     func start() {
         guard globalMonitor == nil else { return }
-        let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        AXIsProcessTrustedWithOptions(prompt)
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
             Task { @MainActor in self?.onTypingActivity() }
         }
