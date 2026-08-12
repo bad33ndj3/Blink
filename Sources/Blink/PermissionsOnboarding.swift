@@ -103,6 +103,7 @@ final class PermissionsOnboardingModel {
 
 struct OnboardingView: View {
     @State private var model = PermissionsOnboardingModel()
+    @State private var launchAtLogin = LaunchAtLogin.isEnabled
     let onFinish: () -> Void
 
     var body: some View {
@@ -121,6 +122,11 @@ struct OnboardingView: View {
                     }
                 }
             }
+
+            Toggle("Start Blink automatisch bij het opstarten van je Mac", isOn: $launchAtLogin)
+                .onChange(of: launchAtLogin) { _, enabled in
+                    LaunchAtLogin.setEnabled(enabled)
+                }
 
             HStack {
                 Spacer()

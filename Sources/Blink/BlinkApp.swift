@@ -25,6 +25,15 @@ struct BlinkApp: App {
                 get: { appDelegate.coordinator.snoozeLimit },
                 set: { appDelegate.coordinator.setSnoozeLimit($0) }
             ), in: 0...3)
+            Toggle("Start bij opstarten", isOn: Binding(
+                get: { appDelegate.coordinator.launchAtLogin },
+                set: { appDelegate.coordinator.setLaunchAtLogin($0) }
+            ))
+            Divider()
+            Button(appDelegate.coordinator.updateStatus) {
+                appDelegate.coordinator.checkForUpdates()
+            }
+            .disabled(appDelegate.coordinator.isCheckingForUpdate)
             Divider()
             Menu("Debug") {
                 Button("Trigger Now") { appDelegate.coordinator.triggerBreakNow() }
@@ -100,6 +109,9 @@ final class BreakCoordinator {
     var intervalMinutes: Int { configuration.intervalSeconds / 60 }
     var deepSessionCapMinutes: Int { configuration.deepSessionCapSeconds / 60 }
     var snoozeLimit: Int { configuration.snoozeLimit }
+    var launchAtLogin: Bool { LaunchAtLogin.isEnabled }
+    var updateStatus = "Controleer op updates..."
+    var isCheckingForUpdate = false
 
     func start() {
         guard timer == nil else { return }
@@ -108,7 +120,33 @@ final class BreakCoordinator {
         }
         typingActivityMonitor.start()
         cameraObserver.start()
-        LaunchAtLogin.register()
+        checkForUpdates(silent: true)
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        LaunchAtLogin.setEnabled(enabled)
+    }
+
+    func checkForUpdates(silent: Bool = false) {
+        guard !isCheckingForUpdate else { return }
+        isCheckingForUpdate = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isCheckingForUpdate = false }
+
+            guard let info = await AppUpdater.checkForUpdate() else {
+                if !silent { self.updateStatus = "Op de nieuwste versie" }
+                return
+            }
+
+            self.updateStatus = "Blink \(info.version) downloaden..."
+            do {
+                try await AppUpdater.downloadAndOpen(info)
+                self.updateStatus = "Blink \(info.version) gedownload"
+            } catch {
+                self.updateStatus = "Update mislukt, probeer opnieuw"
+            }
+        }
     }
 
     func triggerBreakNow() {

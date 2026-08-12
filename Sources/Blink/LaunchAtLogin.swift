@@ -1,8 +1,19 @@
 import ServiceManagement
 
 enum LaunchAtLogin {
-    static func register() {
-        guard SMAppService.mainApp.status == .notRegistered else { return }
-        try? SMAppService.mainApp.register()
+    static var isEnabled: Bool {
+        switch SMAppService.mainApp.status {
+        case .enabled, .requiresApproval: true
+        default: false
+        }
+    }
+
+    static func setEnabled(_ enabled: Bool) {
+        guard enabled != isEnabled else { return }
+        if enabled {
+            try? SMAppService.mainApp.register()
+        } else {
+            try? SMAppService.mainApp.unregister()
+        }
     }
 }
