@@ -8,13 +8,13 @@ struct BlinkApp: App {
 
     var body: some Scene {
         MenuBarExtra("Blink", systemImage: "eye") {
-            Toggle("In a meeting (handmatig)", isOn: Binding(
+            Toggle("In a meeting (manual)", isOn: Binding(
                 get: { appDelegate.coordinator.isMeetingModeActive },
                 set: { appDelegate.coordinator.setManuallyInMeeting($0) }
             ))
             Text(appDelegate.coordinator.isCameraMeetingDetected
-                 ? "Camera actief — pauzes onderdrukt"
-                 : "Camera niet in gebruik")
+                 ? "Camera active — breaks suppressed"
+                 : "Camera not in use")
                 .foregroundStyle(.secondary)
             Divider()
             Stepper("Interval: \(appDelegate.coordinator.intervalMinutes) min", value: Binding(
@@ -29,7 +29,7 @@ struct BlinkApp: App {
                 get: { appDelegate.coordinator.snoozeLimit },
                 set: { appDelegate.coordinator.setSnoozeLimit($0) }
             ), in: 0...3)
-            Toggle("Start bij opstarten", isOn: Binding(
+            Toggle("Start at login", isOn: Binding(
                 get: { appDelegate.coordinator.launchAtLogin },
                 set: { appDelegate.coordinator.setLaunchAtLogin($0) }
             ))
@@ -40,7 +40,7 @@ struct BlinkApp: App {
                 }
                 .disabled(!appDelegate.coordinator.canTapUpdate)
                 Divider()
-                Toggle("Automatisch bijwerken", isOn: Binding(
+                Toggle("Automatically update", isOn: Binding(
                     get: { appDelegate.coordinator.autoUpdateEnabled },
                     set: { appDelegate.coordinator.setAutoUpdateEnabled($0) }
                 ))
@@ -150,13 +150,13 @@ final class BreakCoordinator {
 
     var updateStatus: String {
         switch updateState {
-        case .notChecked: "Controleer op updates"
-        case .checking: "Controleren op updates..."
-        case .upToDate: "Op de nieuwste versie"
-        case .available(let info): "Update beschikbaar: v\(info.version)"
-        case .downloading(let info): "v\(info.version) downloaden..."
-        case .downloaded(let info, _): "v\(info.version) gereed — klik om te installeren en herstarten"
-        case .failed: "Update mislukt, probeer opnieuw"
+        case .notChecked: "Check for updates"
+        case .checking: "Checking for updates..."
+        case .upToDate: "Up to date"
+        case .available(let info): "Update available: v\(info.version)"
+        case .downloading(let info): "Downloading v\(info.version)..."
+        case .downloaded(let info, _): "v\(info.version) ready — click to install and restart"
+        case .failed: "Update failed, try again"
         }
     }
 
@@ -515,7 +515,7 @@ struct BreakOverlayView: View {
                 .frame(minWidth: 170)
                 .animation(reduceMotion ? nil : Self.tick, value: content.secondsRemaining)
 
-            Text("Kijk weg van je schermen")
+            Text("Look away from your screens")
                 .font(.system(size: 19, weight: .regular))
                 .foregroundStyle(.white.opacity(0.6))
 
@@ -535,7 +535,7 @@ struct BreakOverlayView: View {
 
     private var badge: some View {
         glassCapsule {
-            Text("TIJD VOOR EEN PAUZE")
+            Text("TIME FOR A BREAK")
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(3)
                 .foregroundStyle(.white.opacity(0.55))
@@ -574,7 +574,7 @@ struct BreakOverlayView: View {
         } label: {
             glassCapsule(interactive: true) {
                 HStack(spacing: 10) {
-                    Text("Stop nu")
+                    Text("Stop now")
                         .font(.system(size: 15, weight: .medium))
                     ZStack {
                         Circle().fill(.white.opacity(0.12))

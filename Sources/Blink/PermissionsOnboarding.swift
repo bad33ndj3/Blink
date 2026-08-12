@@ -13,17 +13,17 @@ enum PermissionKind: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .accessibility: "Toegankelijkheid"
+        case .accessibility: "Accessibility"
         case .camera: "Camera"
-        case .notifications: "Meldingen"
+        case .notifications: "Notifications"
         }
     }
 
     var detail: String {
         switch self {
-        case .accessibility: "Nodig om je typeactiviteit te herkennen en pauzes te tonen."
-        case .camera: "Nodig om te zien of je in een videogesprek zit."
-        case .notifications: "Nodig om je te herinneren aan een pauze."
+        case .accessibility: "Needed to detect your typing activity and show breaks."
+        case .camera: "Needed to detect whether you're in a video call."
+        case .notifications: "Needed to remind you about a break."
         }
     }
 
@@ -109,9 +109,9 @@ struct OnboardingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Welkom bij Blink")
+                Text("Welcome to Blink")
                     .font(.title2.bold())
-                Text("Blink heeft een paar machtigingen nodig om pauzes te kunnen aankondigen.")
+                Text("Blink needs a few permissions to be able to announce breaks.")
                     .foregroundStyle(.secondary)
             }
 
@@ -123,14 +123,14 @@ struct OnboardingView: View {
                 }
             }
 
-            Toggle("Start Blink automatisch bij het opstarten van je Mac", isOn: $launchAtLogin)
+            Toggle("Automatically start Blink when your Mac starts up", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, enabled in
                     LaunchAtLogin.setEnabled(enabled)
                 }
 
             HStack {
                 Spacer()
-                Button("Klaar") { onFinish() }
+                Button("Done") { onFinish() }
                     .buttonStyle(.borderedProminent)
             }
         }
@@ -163,7 +163,7 @@ private struct PermissionRow: View {
             Circle()
                 .fill(granted ? Color.green : Color.red)
                 .frame(width: 10, height: 10)
-            Button(granted ? "Verleend" : "Vraag toegang") { onRequest() }
+            Button(granted ? "Granted" : "Request access") { onRequest() }
                 .disabled(granted)
         }
         .padding(12)
@@ -180,7 +180,7 @@ final class OnboardingWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Blink instellen"
+        window.title = "Set up Blink"
         window.contentViewController = NSHostingController(rootView: OnboardingView(onFinish: onFinish))
         window.isReleasedWhenClosed = false
         window.center()
