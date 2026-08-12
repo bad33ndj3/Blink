@@ -304,22 +304,48 @@ struct BreakOverlayView: View {
         .onChange(of: content.secondsRemaining) { _, _ in pulseCountdown() }
     }
 
-    private var backdrop: some View {
-        ZStack {
-            Color(red: 0.02, green: 0.02, blue: 0.03).ignoresSafeArea()
-            RadialGradient(
-                colors: [Color(red: 0.32, green: 0.52, blue: 0.98).opacity(0.32), .clear],
-                center: UnitPoint(x: 0.16, y: 0.12), startRadius: 0, endRadius: 560
-            )
-            .blur(radius: 70)
-            .ignoresSafeArea()
-            RadialGradient(
-                colors: [Color(red: 0.58, green: 0.36, blue: 0.92).opacity(0.26), .clear],
-                center: UnitPoint(x: 0.86, y: 0.92), startRadius: 0, endRadius: 520
-            )
-            .blur(radius: 70)
-            .ignoresSafeArea()
+    /// Decoded once and reused — `body` re-evaluates every countdown tick, and re-decoding
+    /// this file from disk each time was visibly janking the timer.
+    ///
+    /// `Bundle.module` resolves relative to `Bundle.main.bundleURL`, which for a packaged
+    /// `.app` is its top-level directory. Our packaging script places resource bundles in the
+    /// conventional `Contents/Resources` location instead, so look there first.
+    private static let backdropImage: Image = {
+        if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("Blink_Blink.bundle"),
+           let bundle = Bundle(url: resourceURL),
+           let fileURL = bundle.url(forResource: "WWDC26_Mac", withExtension: "jpg"),
+           let nsImage = NSImage(contentsOf: fileURL) {
+            return Image(nsImage: nsImage)
         }
+        if let fileURL = Bundle.module.url(forResource: "WWDC26_Mac", withExtension: "jpg"),
+           let nsImage = NSImage(contentsOf: fileURL) {
+            return Image(nsImage: nsImage)
+        }
+        return Image(systemName: "moon.stars")
+    }()
+
+    private var backdrop: some View {
+        GeometryReader { proxy in
+            let w = proxy.size.width
+            let h = proxy.size.height
+
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                Self.backdropImage
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: w, height: h)
+                    .clipped()
+
+                // Vignette to seat the card in a darker, more legible center.
+                RadialGradient(
+                    colors: [.clear, Color.black.opacity(0.55)],
+                    center: .center, startRadius: w * 0.2, endRadius: w * 0.62
+                )
+            }
+        }
+        .ignoresSafeArea()
         .opacity(visible ? 1 : 0)
         .animation(reduceMotion ? nil : Self.entrance, value: visible)
     }
