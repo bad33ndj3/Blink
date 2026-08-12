@@ -1,0 +1,27 @@
+version: '3'
+
+tasks:
+  build:
+    desc: Build the project
+    cmds:
+      - swift build
+
+  test:
+    desc: Run tests
+    cmds:
+      - swift test
+
+  run:
+    desc: Run the Blink executable
+    cmds:
+      - swift run Blink
+
+  package:
+    desc: Package the app as a release .app bundle
+    cmds:
+      - bash scripts/package-app.sh
+
+  clean:
+    desc: Remove build artifacts and dist directory
+    cmds:
+      - rm -rf .build dist

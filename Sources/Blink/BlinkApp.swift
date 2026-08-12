@@ -124,6 +124,9 @@ final class BreakCoordinator {
     }
 
     private func showBreak() {
+        if !overlays.isEmpty {
+            overlays.forEach { $0.dismiss() }
+        }
         overlays = NSScreen.screens.map { screen in
             BreakOverlayWindow(
                 screen: screen,
@@ -224,7 +227,9 @@ final class BreakOverlayWindow: NSPanel {
 
     func show() {
         alphaValue = 0
-        makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        orderFrontRegardless()
+        makeKey()
         NSAnimationContext.runAnimationGroup {
             $0.duration = 2.5
             animator().alphaValue = 1
@@ -283,33 +288,137 @@ struct BreakOverlayView: View {
     @Bindable var content: BreakOverlayContent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Namespace private var glassNamespace
     @State private var visible = false
+    @State private var pulse = false
+
+    private static let entrance = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.9)
+    private static let tick = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.45)
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            GlassEffectContainer {
-                VStack(spacing: 20) {
-                    Text("\\(content.secondsRemaining)")
-                        .font(.system(size: 64, weight: .semibold, design: .rounded))
-                    Text("Look away from your screens")
-                        .font(.title2)
-                }
-                .padding(56)
-                .glassEffect(reduceTransparency ? .identity : .regular, in: .rect(corners: .concentric))
-                .glassEffectID("break-card", in: glassNamespace)
-                if content.canSnooze {
-                    Button("Snooze") { content.snooze() }
-                        .buttonStyle(.glass)
-                        .glassEffectID("snooze", in: glassNamespace)
-                }
-            }
-            .opacity(visible ? 1 : 0)
-            .scaleEffect(visible ? 1 : 0.96)
+            backdrop
+            card
         }
         .task { content.start() }
         .onAppear { visible = true }
-        .animation(reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.85), value: visible)
+        .onChange(of: content.secondsRemaining) { _, _ in pulseCountdown() }
+    }
+
+    private var backdrop: some View {
+        ZStack {
+            Color(red: 0.02, green: 0.02, blue: 0.03).ignoresSafeArea()
+            RadialGradient(
+                colors: [Color(red: 0.32, green: 0.52, blue: 0.98).opacity(0.32), .clear],
+                center: UnitPoint(x: 0.16, y: 0.12), startRadius: 0, endRadius: 560
+            )
+            .blur(radius: 70)
+            .ignoresSafeArea()
+            RadialGradient(
+                colors: [Color(red: 0.58, green: 0.36, blue: 0.92).opacity(0.26), .clear],
+                center: UnitPoint(x: 0.86, y: 0.92), startRadius: 0, endRadius: 520
+            )
+            .blur(radius: 70)
+            .ignoresSafeArea()
+        }
+        .opacity(visible ? 1 : 0)
+        .animation(reduceMotion ? nil : Self.entrance, value: visible)
+    }
+
+    private var card: some View {
+        VStack(spacing: 28) {
+            Text("TIJD VOOR EEN PAUZE")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(3)
+                .foregroundStyle(.white.opacity(0.55))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(.white.opacity(0.08), in: .capsule)
+                .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+
+            Text("\(content.secondsRemaining)")
+                .font(.system(size: 96, weight: .semibold, design: .rounded))
+                .foregroundStyle(
+                    LinearGradient(colors: [.white, .white.opacity(0.65)], startPoint: .top, endPoint: .bottom)
+                )
+                .contentTransition(.numericText(countsDown: true))
+                .scaleEffect(pulse ? 1.05 : 1)
+                .animation(reduceMotion ? nil : Self.tick, value: content.secondsRemaining)
+
+            Text("Kijk weg van je schermen")
+                .font(.system(size: 19, weight: .regular))
+                .foregroundStyle(.white.opacity(0.6))
+
+            if content.canSnooze {
+                snoozeButton.padding(.top, 8)
+            }
+        }
+        .padding(.horizontal, 64)
+        .padding(.vertical, 56)
+        .background(innerCore)
+        .padding(6)
+        .background(outerShell)
+        .opacity(visible ? 1 : 0)
+        .scaleEffect(visible ? 1 : 0.94)
+        .blur(radius: visible ? 0 : 14)
+        .animation(reduceMotion ? nil : Self.entrance, value: visible)
+    }
+
+    private var innerCore: some View {
+        RoundedRectangle(cornerRadius: 34, style: .continuous)
+            .fill(reduceTransparency ? AnyShapeStyle(Color(white: 0.08)) : AnyShapeStyle(.ultraThinMaterial))
+            .overlay(
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.18), .white.opacity(0.04)],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+            )
+    }
+
+    private var outerShell: some View {
+        RoundedRectangle(cornerRadius: 40, style: .continuous)
+            .fill(.white.opacity(0.04))
+            .overlay(
+                RoundedRectangle(cornerRadius: 40, style: .continuous)
+                    .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+            )
+    }
+
+    private var snoozeButton: some View {
+        Button {
+            content.snooze()
+        } label: {
+            HStack(spacing: 10) {
+                Text("Snooze")
+                    .font(.system(size: 15, weight: .medium))
+                ZStack {
+                    Circle().fill(.white.opacity(0.12))
+                    Image(systemName: "moon.zzz")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .frame(width: 26, height: 26)
+            }
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(.leading, 20)
+            .padding(.trailing, 6)
+            .padding(.vertical, 6)
+            .background(.white.opacity(0.08), in: .capsule)
+            .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(1)
+        .animation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.3), value: content.canSnooze)
+    }
+
+    private func pulseCountdown() {
+        guard !reduceMotion else { return }
+        pulse = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(220))
+            pulse = false
+        }
     }
 }
