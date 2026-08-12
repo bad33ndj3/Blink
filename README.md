@@ -5,6 +5,7 @@
 A macOS menu bar app that nudges you to take breaks and look away from your screens.
 
 ![Break overlay](docs/images/break-overlay.png)
+![Menu](docs/images/menu.png)
 
 ## Building
 

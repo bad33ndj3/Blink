@@ -12,6 +12,8 @@ struct BlinkApp: App {
                 get: { appDelegate.coordinator.isMeetingModeActive },
                 set: { appDelegate.coordinator.setManuallyInMeeting($0) }
             ))
+            Text(appDelegate.coordinator.isMeetingModeActive ? "Manual: On" : "Manual: Off")
+                .foregroundStyle(.secondary)
             Text(appDelegate.coordinator.isCameraMeetingDetected
                  ? "Camera active — breaks suppressed"
                  : "Camera not in use")
