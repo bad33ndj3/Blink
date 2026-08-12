@@ -75,9 +75,93 @@ enum AppUpdater {
         return destination
     }
 
-    /// Opens the downloaded DMG so the user finishes the existing drag-to-Applications flow.
-    static func open(_ dmgURL: URL) {
-        NSWorkspace.shared.open(dmgURL)
+    enum InstallError: Error {
+        case mountFailed
+        case appNotFoundOnVolume
+    }
+
+    /// Mounts the DMG, copies the bundled `.app` over the running app's own bundle, and quits —
+    /// a background relauncher script (which outlives this process) finishes the swap and reopens
+    /// the app once this process exits, so there's no "in use" conflict from a manual Finder drag.
+    @MainActor
+    static func install(_ dmgURL: URL) throws {
+        let mountPoint = try mountDMG(dmgURL)
+        guard let sourceApp = try appBundle(onVolume: mountPoint) else {
+            try? unmountDMG(mountPoint)
+            throw InstallError.appNotFoundOnVolume
+        }
+
+        let destinationApp = Bundle.main.bundleURL
+        let scriptURL = try writeRelauncherScript(
+            pid: ProcessInfo.processInfo.processIdentifier,
+            source: sourceApp,
+            destination: destinationApp,
+            mountPoint: mountPoint
+        )
+
+        let relauncher = Process()
+        relauncher.executableURL = URL(fileURLWithPath: "/bin/bash")
+        relauncher.arguments = [scriptURL.path]
+        try relauncher.run()
+
+        NSApp.terminate(nil)
+    }
+
+    private static func mountDMG(_ dmgURL: URL) throws -> URL {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = ["attach", dmgURL.path, "-nobrowse", "-noautoopen", "-plist"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0,
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let entities = plist["system-entities"] as? [[String: Any]]
+        else { throw InstallError.mountFailed }
+
+        for entity in entities {
+            if let mountPoint = entity["mount-point"] as? String {
+                return URL(fileURLWithPath: mountPoint)
+            }
+        }
+        throw InstallError.mountFailed
+    }
+
+    private static func unmountDMG(_ mountPoint: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = ["detach", mountPoint.path, "-quiet"]
+        try process.run()
+        process.waitUntilExit()
+    }
+
+    private static func appBundle(onVolume mountPoint: URL) throws -> URL? {
+        let contents = try FileManager.default.contentsOfDirectory(at: mountPoint, includingPropertiesForKeys: nil)
+        return contents.first { $0.pathExtension == "app" }
+    }
+
+    private static func writeRelauncherScript(pid: Int32, source: URL, destination: URL, mountPoint: URL) throws -> URL {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("blink-relaunch-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/bash
+        while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done
+        rm -rf \(shellQuote(destination.path))
+        cp -R \(shellQuote(source.path)) \(shellQuote(destination.path))
+        xattr -dr com.apple.quarantine \(shellQuote(destination.path)) 2>/dev/null || true
+        hdiutil detach \(shellQuote(mountPoint.path)) -quiet
+        open \(shellQuote(destination.path))
+        rm -- "$0"
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        return scriptURL
+    }
+
+    private static func shellQuote(_ path: String) -> String {
+        "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
     private static func isVersion(_ candidate: String, newerThan current: String) -> Bool {

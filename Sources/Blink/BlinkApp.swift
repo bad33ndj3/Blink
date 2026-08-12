@@ -30,10 +30,17 @@ struct BlinkApp: App {
                 set: { appDelegate.coordinator.setLaunchAtLogin($0) }
             ))
             Divider()
-            Button(appDelegate.coordinator.updateStatus) {
-                appDelegate.coordinator.handleUpdateTap()
+            Menu("Updates") {
+                Button(appDelegate.coordinator.updateStatus) {
+                    appDelegate.coordinator.handleUpdateTap()
+                }
+                .disabled(!appDelegate.coordinator.canTapUpdate)
+                Divider()
+                Toggle("Automatisch bijwerken", isOn: Binding(
+                    get: { appDelegate.coordinator.autoUpdateEnabled },
+                    set: { appDelegate.coordinator.setAutoUpdateEnabled($0) }
+                ))
             }
-            .disabled(!appDelegate.coordinator.canTapUpdate)
             Divider()
             Menu("Debug") {
                 Button("Trigger Now") { appDelegate.coordinator.triggerBreakNow() }
@@ -55,6 +62,8 @@ final class BlinkAppDelegate: NSObject, NSApplicationDelegate {
     private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard Self.terminateIfAlreadyRunning() else { return }
+
         coordinator.start()
 
         if !UserDefaults.standard.bool(forKey: Self.hasCompletedOnboardingKey) {
@@ -64,6 +73,17 @@ final class BlinkAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// Returns false and terminates this process if another instance of Blink is already running.
+    private static func terminateIfAlreadyRunning() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return true }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        guard !others.isEmpty else { return true }
+        others.first?.activate()
+        NSApp.terminate(nil)
+        return false
     }
 
     @objc func showOnboarding() {
@@ -111,6 +131,17 @@ final class BreakCoordinator {
     var snoozeLimit: Int { configuration.snoozeLimit }
     var launchAtLogin: Bool { LaunchAtLogin.isEnabled }
     private(set) var updateState: UpdateState = .notChecked
+    private static let autoUpdateKey = "autoUpdateEnabled"
+    private static let updateCheckInterval: TimeInterval = 6 * 60 * 60
+    private var updateCheckTimer: Timer?
+
+    var autoUpdateEnabled: Bool {
+        UserDefaults.standard.object(forKey: Self.autoUpdateKey) as? Bool ?? true
+    }
+
+    func setAutoUpdateEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.autoUpdateKey)
+    }
 
     var updateStatus: String {
         switch updateState {
@@ -119,7 +150,7 @@ final class BreakCoordinator {
         case .upToDate: "Op de nieuwste versie"
         case .available(let info): "Update beschikbaar: v\(info.version)"
         case .downloading(let info): "v\(info.version) downloaden..."
-        case .downloaded(let info, _): "v\(info.version) gedownload — klik om te installeren"
+        case .downloaded(let info, _): "v\(info.version) gereed — klik om te installeren en herstarten"
         case .failed: "Update mislukt, probeer opnieuw"
         }
     }
@@ -139,6 +170,9 @@ final class BreakCoordinator {
         typingActivityMonitor.start()
         cameraObserver.start()
         checkForUpdates()
+        updateCheckTimer = .scheduledTimer(withTimeInterval: Self.updateCheckInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkForUpdates() }
+        }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -152,19 +186,25 @@ final class BreakCoordinator {
         case .available(let info):
             downloadUpdate(info)
         case .downloaded(_, let dmgURL):
-            AppUpdater.open(dmgURL)
+            installUpdate(dmgURL)
         case .checking, .downloading:
             break
         }
     }
 
     private func checkForUpdates() {
-        guard updateState != .checking else { return }
+        switch updateState {
+        case .checking, .downloading: return
+        default: break
+        }
         updateState = .checking
         Task { [weak self] in
             guard let self else { return }
             if let info = await AppUpdater.checkForUpdate() {
                 self.updateState = .available(info)
+                if self.autoUpdateEnabled {
+                    self.downloadUpdate(info)
+                }
             } else {
                 self.updateState = .upToDate
             }
@@ -177,11 +217,21 @@ final class BreakCoordinator {
             guard let self else { return }
             do {
                 let dmgURL = try await AppUpdater.download(info)
-                AppUpdater.open(dmgURL)
                 self.updateState = .downloaded(info, dmgURL)
+                if self.autoUpdateEnabled {
+                    self.installUpdate(dmgURL)
+                }
             } catch {
                 self.updateState = .failed
             }
+        }
+    }
+
+    private func installUpdate(_ dmgURL: URL) {
+        do {
+            try AppUpdater.install(dmgURL)
+        } catch {
+            updateState = .failed
         }
     }
 

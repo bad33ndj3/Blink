@@ -21,6 +21,11 @@ tasks:
     cmds:
       - bash scripts/package-app.sh
 
+  dmg:
+    desc: Package the app and build a drag-to-install DMG
+    cmds:
+      - zsh scripts/make-dmg.sh
+
   clean:
     desc: Remove build artifacts and dist directory
     cmds:
