@@ -78,6 +78,7 @@ final class BreakCoordinator {
     private var scheduler: BreakScheduler
     private var timer: Timer?
     private var overlays: [BreakOverlayWindow] = []
+    private var sharedContent: BreakOverlayContent?
     private var snoozesUsed = 0
     @ObservationIgnored private lazy var typingActivityMonitor = TypingActivityMonitor { [weak self] in
         self?.handle(.typingActivity)
@@ -127,19 +128,19 @@ final class BreakCoordinator {
         if !overlays.isEmpty {
             overlays.forEach { $0.dismiss() }
         }
-        overlays = NSScreen.screens.map { screen in
-            BreakOverlayWindow(
-                screen: screen,
-                completion: { [weak self] in self?.completeBreak() },
-                acceptSnooze: { [weak self] in self?.acceptSnooze() ?? false },
-                dismissForSnooze: { [weak self] in self?.dismissForSnooze() }
-            )
-        }
+        let content = BreakOverlayContent(canSnooze: snoozesUsed < configuration.snoozeLimit)
+        content.onComplete = { [weak self] in self?.completeBreak() }
+        content.onSnoozeRequested = { [weak self] in self?.acceptSnooze() ?? false }
+        content.onSnoozeCompleted = { [weak self] in self?.dismissForSnooze() }
+        sharedContent = content
+        overlays = NSScreen.screens.map { BreakOverlayWindow(screen: $0, content: content) }
         overlays.forEach { $0.show() }
     }
 
     private func completeBreak() {
         guard !overlays.isEmpty else { return }
+        sharedContent?.stop()
+        sharedContent = nil
         overlays.forEach { $0.dismiss() }
         overlays = []
         snoozesUsed = 0
@@ -154,6 +155,8 @@ final class BreakCoordinator {
     }
 
     private func dismissForSnooze() {
+        sharedContent?.stop()
+        sharedContent = nil
         overlays.forEach { $0.dismiss() }
         overlays = []
     }
@@ -196,31 +199,14 @@ final class BreakCoordinator {
 
 @MainActor
 final class BreakOverlayWindow: NSPanel {
-    private let content = BreakOverlayContent()
-    private var completion: (() -> Void)?
-
-    init(
-        screen: NSScreen,
-        completion: @escaping () -> Void,
-        acceptSnooze: @escaping () -> Bool,
-        dismissForSnooze: @escaping () -> Void
-    ) {
-        self.completion = completion
+    init(screen: NSScreen, content: BreakOverlayContent) {
         super.init(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         isOpaque = true
         backgroundColor = .black
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         contentView = NSHostingView(rootView: BreakOverlayView(content: content))
-        content.onComplete = { [weak self] in self?.completion?() }
-        content.onSnoozeRequested = { [weak self] in self?.acceptSnooze?() ?? false }
-        content.onSnoozeCompleted = { [weak self] in self?.dismissForSnooze?() }
-        self.acceptSnooze = acceptSnooze
-        self.dismissForSnooze = dismissForSnooze
     }
-
-    private var acceptSnooze: (() -> Bool)?
-    private var dismissForSnooze: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
@@ -231,14 +217,18 @@ final class BreakOverlayWindow: NSPanel {
         orderFrontRegardless()
         makeKey()
         NSAnimationContext.runAnimationGroup {
-            $0.duration = 2.5
+            $0.duration = 0.5
             animator().alphaValue = 1
         }
     }
 
     func dismiss() {
-        content.stop()
-        close()
+        NSAnimationContext.runAnimationGroup {
+            $0.duration = 0.25
+            animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            Task { @MainActor in self?.close() }
+        }
     }
 }
 
@@ -249,8 +239,12 @@ final class BreakOverlayContent {
     var onComplete: (() -> Void)?
     var onSnoozeRequested: (() -> Bool)?
     var onSnoozeCompleted: (() -> Void)?
-    var canSnooze = true
+    var canSnooze: Bool
     private var timer: Timer?
+
+    init(canSnooze: Bool) {
+        self.canSnooze = canSnooze
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -271,6 +265,11 @@ final class BreakOverlayContent {
         timer = nil
     }
 
+    func stopNow() {
+        stop()
+        onComplete?()
+    }
+
     func snooze() {
         guard canSnooze else { return }
         guard onSnoozeRequested?() == true else { return }
@@ -289,7 +288,6 @@ struct BreakOverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var visible = false
-    @State private var pulse = false
 
     private static let entrance = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.9)
     private static let tick = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.45)
@@ -301,7 +299,6 @@ struct BreakOverlayView: View {
         }
         .task { content.start() }
         .onAppear { visible = true }
-        .onChange(of: content.secondsRemaining) { _, _ in pulseCountdown() }
     }
 
     /// Decoded once and reused — `body` re-evaluates every countdown tick, and re-decoding
@@ -351,100 +348,130 @@ struct BreakOverlayView: View {
     }
 
     private var card: some View {
-        VStack(spacing: 28) {
-            Text("TIJD VOOR EEN PAUZE")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(3)
-                .foregroundStyle(.white.opacity(0.55))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(.white.opacity(0.08), in: .capsule)
-                .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
-
-            Text("\(content.secondsRemaining)")
-                .font(.system(size: 96, weight: .semibold, design: .rounded))
-                .foregroundStyle(
-                    LinearGradient(colors: [.white, .white.opacity(0.65)], startPoint: .top, endPoint: .bottom)
-                )
-                .contentTransition(.numericText(countsDown: true))
-                .scaleEffect(pulse ? 1.05 : 1)
-                .animation(reduceMotion ? nil : Self.tick, value: content.secondsRemaining)
-
-            Text("Kijk weg van je schermen")
-                .font(.system(size: 19, weight: .regular))
-                .foregroundStyle(.white.opacity(0.6))
-
-            if content.canSnooze {
-                snoozeButton.padding(.top, 8)
+        Group {
+            if reduceTransparency {
+                cardContent
+                    .background(
+                        RoundedRectangle(cornerRadius: 34, style: .continuous)
+                            .fill(Color(white: 0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 34, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                            )
+                    )
+            } else {
+                GlassEffectContainer {
+                    cardContent
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+                }
             }
         }
-        .padding(.horizontal, 64)
-        .padding(.vertical, 56)
-        .background(innerCore)
-        .padding(6)
-        .background(outerShell)
         .opacity(visible ? 1 : 0)
         .scaleEffect(visible ? 1 : 0.94)
         .blur(radius: visible ? 0 : 14)
         .animation(reduceMotion ? nil : Self.entrance, value: visible)
     }
 
-    private var innerCore: some View {
-        RoundedRectangle(cornerRadius: 34, style: .continuous)
-            .fill(reduceTransparency ? AnyShapeStyle(Color(white: 0.08)) : AnyShapeStyle(.ultraThinMaterial))
-            .overlay(
-                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [.white.opacity(0.18), .white.opacity(0.04)],
-                            startPoint: .top, endPoint: .bottom
-                        ),
-                        lineWidth: 1
-                    )
-            )
+    private var cardContent: some View {
+        VStack(spacing: 28) {
+            badge
+
+            Text("\(content.secondsRemaining)")
+                .font(.system(size: 96, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(
+                    LinearGradient(colors: [.white, .white.opacity(0.65)], startPoint: .top, endPoint: .bottom)
+                )
+                .contentTransition(.numericText(countsDown: true))
+                .frame(minWidth: 170)
+                .animation(reduceMotion ? nil : Self.tick, value: content.secondsRemaining)
+
+            Text("Kijk weg van je schermen")
+                .font(.system(size: 19, weight: .regular))
+                .foregroundStyle(.white.opacity(0.6))
+
+            Group {
+                if content.canSnooze {
+                    snoozeButton
+                } else {
+                    stopNowButton
+                }
+            }
+            .padding(.top, 8)
+            .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .top)))
+        }
+        .padding(.horizontal, 64)
+        .padding(.vertical, 56)
     }
 
-    private var outerShell: some View {
-        RoundedRectangle(cornerRadius: 40, style: .continuous)
-            .fill(.white.opacity(0.04))
-            .overlay(
-                RoundedRectangle(cornerRadius: 40, style: .continuous)
-                    .strokeBorder(.white.opacity(0.08), lineWidth: 1)
-            )
+    private var badge: some View {
+        glassCapsule {
+            Text("TIJD VOOR EEN PAUZE")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(3)
+                .foregroundStyle(.white.opacity(0.55))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+        }
     }
 
     private var snoozeButton: some View {
         Button {
             content.snooze()
         } label: {
-            HStack(spacing: 10) {
-                Text("Snooze")
-                    .font(.system(size: 15, weight: .medium))
-                ZStack {
-                    Circle().fill(.white.opacity(0.12))
-                    Image(systemName: "moon.zzz")
-                        .font(.system(size: 12, weight: .medium))
+            glassCapsule(interactive: true) {
+                HStack(spacing: 10) {
+                    Text("Snooze")
+                        .font(.system(size: 15, weight: .medium))
+                    ZStack {
+                        Circle().fill(.white.opacity(0.12))
+                        Image(systemName: "moon.zzz")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .frame(width: 26, height: 26)
                 }
-                .frame(width: 26, height: 26)
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.leading, 20)
+                .padding(.trailing, 6)
+                .padding(.vertical, 6)
             }
-            .foregroundStyle(.white.opacity(0.85))
-            .padding(.leading, 20)
-            .padding(.trailing, 6)
-            .padding(.vertical, 6)
-            .background(.white.opacity(0.08), in: .capsule)
-            .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
         }
         .buttonStyle(.plain)
-        .scaleEffect(1)
-        .animation(reduceMotion ? nil : .timingCurve(0.32, 0.72, 0, 1, duration: 0.3), value: content.canSnooze)
     }
 
-    private func pulseCountdown() {
-        guard !reduceMotion else { return }
-        pulse = true
-        Task {
-            try? await Task.sleep(for: .milliseconds(220))
-            pulse = false
+    private var stopNowButton: some View {
+        Button {
+            content.stopNow()
+        } label: {
+            glassCapsule(interactive: true) {
+                HStack(spacing: 10) {
+                    Text("Stop nu")
+                        .font(.system(size: 15, weight: .medium))
+                    ZStack {
+                        Circle().fill(.white.opacity(0.12))
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .frame(width: 26, height: 26)
+                }
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.leading, 20)
+                .padding(.trailing, 6)
+                .padding(.vertical, 6)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func glassCapsule<Content: View>(interactive: Bool = false, @ViewBuilder content: () -> Content) -> some View {
+        if reduceTransparency {
+            content()
+                .background(.white.opacity(0.08), in: .capsule)
+                .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+        } else {
+            content()
+                .glassEffect(Glass.regular.interactive(interactive), in: .capsule)
         }
     }
 }
