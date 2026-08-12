@@ -22,9 +22,19 @@ private struct GitHubRelease: Decodable {
     }
 }
 
-struct AppUpdateInfo {
+struct AppUpdateInfo: Equatable {
     let version: String
     let downloadURL: URL
+}
+
+enum UpdateState: Equatable {
+    case notChecked
+    case checking
+    case upToDate
+    case available(AppUpdateInfo)
+    case downloading(AppUpdateInfo)
+    case downloaded(AppUpdateInfo, URL)
+    case failed
 }
 
 enum AppUpdater {
@@ -51,9 +61,9 @@ enum AppUpdater {
         return AppUpdateInfo(version: latestVersion, downloadURL: asset.browserDownloadURL)
     }
 
-    /// Downloads the release DMG, strips the quarantine flag Gatekeeper would otherwise
-    /// block on, and opens it so the user finishes the existing drag-to-Applications flow.
-    static func downloadAndOpen(_ info: AppUpdateInfo) async throws {
+    /// Downloads the release DMG and strips the quarantine flag Gatekeeper would otherwise
+    /// block on. Does not open it — call `open(_:)` once the caller wants to act on it.
+    static func download(_ info: AppUpdateInfo) async throws -> URL {
         let (tempURL, _) = try await URLSession.shared.download(from: info.downloadURL)
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("Blink-\(info.version).dmg")
@@ -62,7 +72,12 @@ enum AppUpdater {
         destination.withUnsafeFileSystemRepresentation { path in
             _ = path.map { removexattr($0, "com.apple.quarantine", 0) }
         }
-        NSWorkspace.shared.open(destination)
+        return destination
+    }
+
+    /// Opens the downloaded DMG so the user finishes the existing drag-to-Applications flow.
+    static func open(_ dmgURL: URL) {
+        NSWorkspace.shared.open(dmgURL)
     }
 
     private static func isVersion(_ candidate: String, newerThan current: String) -> Bool {

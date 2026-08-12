@@ -31,9 +31,9 @@ struct BlinkApp: App {
             ))
             Divider()
             Button(appDelegate.coordinator.updateStatus) {
-                appDelegate.coordinator.checkForUpdates()
+                appDelegate.coordinator.handleUpdateTap()
             }
-            .disabled(appDelegate.coordinator.isCheckingForUpdate)
+            .disabled(!appDelegate.coordinator.canTapUpdate)
             Divider()
             Menu("Debug") {
                 Button("Trigger Now") { appDelegate.coordinator.triggerBreakNow() }
@@ -110,8 +110,26 @@ final class BreakCoordinator {
     var deepSessionCapMinutes: Int { configuration.deepSessionCapSeconds / 60 }
     var snoozeLimit: Int { configuration.snoozeLimit }
     var launchAtLogin: Bool { LaunchAtLogin.isEnabled }
-    var updateStatus = "Controleer op updates..."
-    var isCheckingForUpdate = false
+    private(set) var updateState: UpdateState = .notChecked
+
+    var updateStatus: String {
+        switch updateState {
+        case .notChecked: "Controleer op updates"
+        case .checking: "Controleren op updates..."
+        case .upToDate: "Op de nieuwste versie"
+        case .available(let info): "Update beschikbaar: v\(info.version)"
+        case .downloading(let info): "v\(info.version) downloaden..."
+        case .downloaded(let info, _): "v\(info.version) gedownload — klik om te installeren"
+        case .failed: "Update mislukt, probeer opnieuw"
+        }
+    }
+
+    var canTapUpdate: Bool {
+        switch updateState {
+        case .checking, .downloading: false
+        default: true
+        }
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -120,31 +138,49 @@ final class BreakCoordinator {
         }
         typingActivityMonitor.start()
         cameraObserver.start()
-        checkForUpdates(silent: true)
+        checkForUpdates()
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
         LaunchAtLogin.setEnabled(enabled)
     }
 
-    func checkForUpdates(silent: Bool = false) {
-        guard !isCheckingForUpdate else { return }
-        isCheckingForUpdate = true
+    func handleUpdateTap() {
+        switch updateState {
+        case .notChecked, .upToDate, .failed:
+            checkForUpdates()
+        case .available(let info):
+            downloadUpdate(info)
+        case .downloaded(_, let dmgURL):
+            AppUpdater.open(dmgURL)
+        case .checking, .downloading:
+            break
+        }
+    }
+
+    private func checkForUpdates() {
+        guard updateState != .checking else { return }
+        updateState = .checking
         Task { [weak self] in
             guard let self else { return }
-            defer { self.isCheckingForUpdate = false }
-
-            guard let info = await AppUpdater.checkForUpdate() else {
-                if !silent { self.updateStatus = "Op de nieuwste versie" }
-                return
+            if let info = await AppUpdater.checkForUpdate() {
+                self.updateState = .available(info)
+            } else {
+                self.updateState = .upToDate
             }
+        }
+    }
 
-            self.updateStatus = "Blink \(info.version) downloaden..."
+    private func downloadUpdate(_ info: AppUpdateInfo) {
+        updateState = .downloading(info)
+        Task { [weak self] in
+            guard let self else { return }
             do {
-                try await AppUpdater.downloadAndOpen(info)
-                self.updateStatus = "Blink \(info.version) gedownload"
+                let dmgURL = try await AppUpdater.download(info)
+                AppUpdater.open(dmgURL)
+                self.updateState = .downloaded(info, dmgURL)
             } catch {
-                self.updateStatus = "Update mislukt, probeer opnieuw"
+                self.updateState = .failed
             }
         }
     }
