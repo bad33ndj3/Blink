@@ -8,10 +8,14 @@ struct BlinkApp: App {
 
     var body: some Scene {
         MenuBarExtra("Blink", systemImage: "eye") {
-            Toggle("In a meeting", isOn: Binding(
+            Toggle("In a meeting (handmatig)", isOn: Binding(
                 get: { appDelegate.coordinator.isMeetingModeActive },
                 set: { appDelegate.coordinator.setManuallyInMeeting($0) }
             ))
+            Text(appDelegate.coordinator.isCameraMeetingDetected
+                 ? "Camera actief — pauzes onderdrukt"
+                 : "Camera niet in gebruik")
+                .foregroundStyle(.secondary)
             Divider()
             Stepper("Interval: \(appDelegate.coordinator.intervalMinutes) min", value: Binding(
                 get: { appDelegate.coordinator.intervalMinutes },
@@ -126,6 +130,7 @@ final class BreakCoordinator {
     }
 
     var isMeetingModeActive: Bool { meetingModeSource.isManuallyActive }
+    var isCameraMeetingDetected: Bool { meetingModeSource.isCameraActive }
     var intervalMinutes: Int { configuration.intervalSeconds / 60 }
     var deepSessionCapMinutes: Int { configuration.deepSessionCapSeconds / 60 }
     var snoozeLimit: Int { configuration.snoozeLimit }
